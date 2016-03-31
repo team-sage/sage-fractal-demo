@@ -1,11 +1,8 @@
 package sample;
 
-import com.sage.task.SageTask;
+import com.sage.api.models.Job;
 import javafx.animation.AnimationTimer;
 import javafx.application.Application;
-import javafx.beans.property.DoubleProperty;
-import javafx.beans.property.SimpleDoubleProperty;
-import javafx.fxml.FXMLLoader;
 import javafx.scene.Group;
 import javafx.scene.Scene;
 import javafx.scene.canvas.Canvas;
@@ -13,19 +10,18 @@ import javafx.scene.canvas.GraphicsContext;
 import javafx.scene.image.PixelWriter;
 import javafx.scene.paint.Color;
 import javafx.stage.Stage;
-import javafx.util.Duration;
 
 import java.io.File;
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
-import java.nio.IntBuffer;
+import java.util.*;
 
 import com.sage.api.client.SageClient;
 
 public class Main extends Application {
-    private final int WINWIDTH = 1920;
-    private final int WINHEIGHT = 1080;
-    private final int MAXDEPTH = 1000;
+    private final int WINWIDTH  =   192;    //Window width
+    private final int WINHEIGHT =   108;    //Window height
+    private final int MAXDEPTH  =   1000;   //Maximum recursive depth of fractal
+    private final int BOUNTY    =   8;      //Bounty per job
+    private final int TIMEOUT   =   100;    //Job timeout
 
     @Override public void start(Stage stage) {
         fadeTest(stage);
@@ -33,69 +29,121 @@ public class Main extends Application {
 
     private void fadeTest(Stage stage){
 
-        //send out all the sage tasks here
-        //TODO: use API to send off all the jobs
-
-        int[] data = {WINWIDTH, WINHEIGHT, MAXDEPTH, 0};
-        byte[] dataToSend = int2byte(data);
-
-        SageTask fracTask = new FracTask();
-        byte[] dataReceived = fracTask.runTask(0, dataToSend);
-
-        SageClient sc = new SageClient();
-        File javaFile = new File("/home/wert/Documents/Test/FracTask.java");
-        int jobid = -1;
-        try{
-            jobid = sc.placeJobOrder(8,100, dataToSend, javaFile);
-        }
-        catch (Exception e){
-            e.printStackTrace();
-        }
-        System.out.println(jobid);
-
+        //Create a JavaFX canvas with the above specified width and height
         final Canvas canvas = new Canvas(WINWIDTH, WINHEIGHT);
 
         //Content for the JavaFX timer
         AnimationTimer timer = new AnimationTimer() {
-            int row = 0; //TODO: remoe these once API is implemented
-            long then = 0;
+            int currentJobToSend    =   0;  //Keep track of which job is being sent out per frame
+            int numberOfJobs        =   0;  //Keep track of how many active jobs are out there
+            int currentJobToProcess =   0;  //Keep track of which job is currently being processed
+            int totalJobsCompleted  =   0;  //Keep track of how many jobs have been completed
 
+            //HashMap of kv-pairs consisting of (Job ID, Fractal Row Number)
+            Map<Integer, Integer> ids = new HashMap<Integer, Integer>();
 
+            //Start a Sage API client
+            SageClient sc = new SageClient();
 
+            //Flag to check if all the jobs are still being sent out. Set to false when done.
+            boolean init = true;
             //Handle "now" to be able to track progression. Content is called once per frame
             @Override
             public void handle(long now) {
-                GraphicsContext gc = canvas.getGraphicsContext2D();
-                int width = WINWIDTH, height = WINHEIGHT, max = MAXDEPTH;
-                //FracTask frac = new FracTask(width,height,max);
 
-                Color[] colors = new Color[max];
-                for (int i = 0; i<max; i++) {
+                //Send out all the jobs
+                if(init) {
+                    //Get the java file to be sent and computed on android devices
+                    File javaFile = new File("/home/wert/Documents/Test/FracTask.java");
+                    //Set jobid as -1 for checking later
+                    int jobid = -1;
+                    try {
+                        //Int array of all necessary data.
+                        //Width, height, depth, and current job (row number) are used by the java file
+                        int[] data = {WINWIDTH, WINHEIGHT, MAXDEPTH, currentJobToSend};
+                        //Convert to byte array
+                        byte[] dataToSend = int2byte(data);
+                        //Use the SageClient sc to place the job order
+                        jobid = sc.placeJobOrder(BOUNTY, TIMEOUT, dataToSend, javaFile);
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    }
+                    //Check for success, and att the jobid with its associated row number to the HashMap
+                    if(jobid != -1) ids.put(jobid, currentJobToSend);
+                    System.out.println(jobid); //TODO: remove debug print
+                    //Iterate to the next job to send
+                    currentJobToSend++;
+                    //Stop coming to the init state when all jobs are sent out
+                    if(currentJobToSend == WINHEIGHT)init = false;
+                }
+
+                //Prepare colors to be drawn one pixel at a time
+                GraphicsContext gc = canvas.getGraphicsContext2D();
+                Color[] colors = new Color[MAXDEPTH];
+                for (int i = 0; i < MAXDEPTH; i++) {
                     colors[i] = Color.hsb(i/256f, 1, i/(i+8f));
                 }
 
-                //get back any finished tasks here
-                //draw them to the screen using the below inner for loop (outer "if loop" to be removed)
-                /*if(Math.abs(now - then) > 0.0 && row < WINHEIGHT) { //TODO: replace this with checking for finished jobs
-                    int[] iterationNums = frac.getIterations(row);
+                //get current number of running jobs
+                numberOfJobs = ids.keySet().size();
+                //get current job to process by accessing some key from the keySet.
+                Object[] keys = ids.keySet().toArray();
+                int jobid = (int)keys[currentJobToProcess];
 
-                    for (int col = 0; col < width; col++) {
-                        int iteration = iterationNums[col];
-                        PixelWriter pw = gc.getPixelWriter();
-                        if (iteration < max) pw.setColor(col, row, colors[iteration]);
-                        else pw.setColor(col, row, Color.BLACK);
+                //set result to null, assign value to it when result is received.
+                byte[] result = null;
+                try {
+                    System.out.println("job id: " + jobid); //TODO: remove debug print
+                    boolean done = sc.pollJob(jobid);
+                    if(done) {
+                        //get the job from SageClient sc with the current jobid.
+                        Job job = sc.getJob(jobid);
+                        //Jobs are sometimes coming back null with a done status. Extra check to ensure this doesn't happen.
+                        if(job != null)result = job.getResult();
+
+                        //If result is till null, then we didn't get a valid job back.
+                        //If a job did come back, use its result to draw a fractal row to the screen.
+                        if (result != null) {
+                            int[] iterationNums = byte2int(result);
+                            for (int col = 0; col < WINWIDTH; col++) {
+                                int iteration = iterationNums[col];
+                                PixelWriter pw = gc.getPixelWriter();
+                                if (iteration < MAXDEPTH) pw.setColor(col, ids.get(jobid), colors[iteration]);
+                                else pw.setColor(col, ids.get(jobid), Color.BLACK);
+                            }
+                        }
+                        //Remove this ID because it is no longer needed.
+                        ids.remove(jobid);
+                        //Keep track of how many jobs have been finished so we know when to end.
+                        totalJobsCompleted++;
                     }
-                    row++;
-                    then = now;
-                }*/
+                    //Use this else to use a different method of job selection.
+                    //This will cycle through all the available jobs each frame.
+                    //Without it, we just look for the first available one.
+                    //else currentJobToProcess++;
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+                //Cycle back to first job if we make it to the end.
+                if(currentJobToProcess >= numberOfJobs-1) currentJobToProcess = 0;
+                //If all jobs are finished, stop the timer. It is no longer needed.
+                if(totalJobsCompleted == WINHEIGHT) this.stop();
             }
         };
 
+        //Start the scene
         stage.setScene(new Scene(new Group(canvas)));
+        //Show the stage
         stage.show();
+        //Start the timer
         timer.start();
     }
 
+    /**
+     * Convert an integer array to a byte array and return it
+     * @param src input int array
+     * @return byte array
+     */
     public static byte[] int2byte(int[]src) {
         int srcLength = src.length;
         byte[]dst = new byte[srcLength << 2];
@@ -111,6 +159,11 @@ public class Main extends Application {
         return dst;
     }
 
+    /**
+     * Convert a byte array to an integer array
+     * @param src input byte array
+     * @return integer array
+     */
     public static int[] byte2int(byte[]src) {
         int dstLength = src.length >>> 2;
         int[]dst = new int[dstLength];
