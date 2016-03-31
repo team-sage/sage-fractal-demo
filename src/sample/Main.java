@@ -52,7 +52,7 @@ public class Main extends Application {
             public void handle(long now) {
 
                 //Send out all the jobs
-                if(init) {
+                while(init) {
                     //Get the java file to be sent and computed on android devices
                     File javaFile = new File("/home/wert/Documents/Test/FracTask.java");
                     //Set jobid as -1 for checking later
@@ -98,7 +98,8 @@ public class Main extends Application {
                     if(done) {
                         //get the job from SageClient sc with the current jobid.
                         Job job = sc.getJob(jobid);
-                        //Jobs are sometimes coming back null with a done status. Extra check to ensure this doesn't happen.
+                        //Jobs are sometimes coming back null with a done status.
+                        //Extra check to ensure this doesn't happen.
                         if(job != null)result = job.getResult();
 
                         //If result is till null, then we didn't get a valid job back.
@@ -120,7 +121,7 @@ public class Main extends Application {
                     //Use this else to use a different method of job selection.
                     //This will cycle through all the available jobs each frame.
                     //Without it, we just look for the first available one.
-                    //else currentJobToProcess++;
+                    else currentJobToProcess++;
                 } catch (Exception e) {
                     e.printStackTrace();
                 }
