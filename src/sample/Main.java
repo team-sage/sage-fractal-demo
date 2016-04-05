@@ -1,27 +1,30 @@
 package sample;
 
-import com.sage.api.models.Job;
 import javafx.animation.AnimationTimer;
 import javafx.application.Application;
 import javafx.scene.Group;
 import javafx.scene.Scene;
 import javafx.scene.canvas.Canvas;
-import javafx.scene.canvas.GraphicsContext;
-import javafx.scene.image.PixelWriter;
-import javafx.scene.paint.Color;
 import javafx.stage.Stage;
-
-import java.io.File;
 import java.util.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
 
 import com.sage.api.client.SageClient;
 
 public class Main extends Application {
-    private final int WINWIDTH  =   192;    //Window width
-    private final int WINHEIGHT =   108;    //Window height
-    private final int MAXDEPTH  =   1000;   //Maximum recursive depth of fractal
-    private final int BOUNTY    =   8;      //Bounty per job
-    private final int TIMEOUT   =   100;    //Job timeout
+    public static final int WINWIDTH  =   1920/3;    //Window width
+    public static final int WINHEIGHT =   1080/3;    //Window height
+    public static final int MAXDEPTH  =   1000;   //Maximum recursive depth of fractal
+    public static final int BOUNTY    =   8;      //Bounty per job
+    public static final int TIMEOUT   =   100;    //Job timeout
+
+    public static int totalJobsCompleted  =   0;  //Keep track of how many jobs have been completed
+
+    //public static final Semaphore sema = new Semaphore(1); //Semaphore for adding to the ids map
+    protected final ExecutorService pool =
+            new ScheduledThreadPoolExecutor(Runtime.getRuntime().availableProcessors());
 
     @Override public void start(Stage stage) {
         fadeTest(stage);
@@ -35,9 +38,8 @@ public class Main extends Application {
         //Content for the JavaFX timer
         AnimationTimer timer = new AnimationTimer() {
             int currentJobToSend    =   0;  //Keep track of which job is being sent out per frame
-            int numberOfJobs        =   0;  //Keep track of how many active jobs are out there
             int currentJobToProcess =   0;  //Keep track of which job is currently being processed
-            int totalJobsCompleted  =   0;  //Keep track of how many jobs have been completed
+
 
             //HashMap of kv-pairs consisting of (Job ID, Fractal Row Number)
             Map<Integer, Integer> ids = new HashMap<Integer, Integer>();
@@ -52,83 +54,37 @@ public class Main extends Application {
             public void handle(long now) {
 
                 //Send out all the jobs
-                while(init) {
-                    //Get the java file to be sent and computed on android devices
-                    File javaFile = new File("/home/wert/Documents/Test/FracTask.java");
-                    //Set jobid as -1 for checking later
-                    int jobid = -1;
-                    try {
-                        //Int array of all necessary data.
-                        //Width, height, depth, and current job (row number) are used by the java file
-                        int[] data = {WINWIDTH, WINHEIGHT, MAXDEPTH, currentJobToSend};
-                        //Convert to byte array
-                        byte[] dataToSend = int2byte(data);
-                        //Use the SageClient sc to place the job order
-                        jobid = sc.placeJobOrder(BOUNTY, TIMEOUT, dataToSend, javaFile);
-                    } catch (Exception e) {
-                        e.printStackTrace();
-                    }
-                    //Check for success, and att the jobid with its associated row number to the HashMap
-                    if(jobid != -1) ids.put(jobid, currentJobToSend);
-                    System.out.println(jobid); //TODO: remove debug print
+                while (init) {
+                    ConcurrentJob tempJob = new ConcurrentJob(currentJobToSend, sc, ids);
+                    FutureTask<Integer> tempTask = new FutureTask<Integer>(tempJob);
+                    pool.submit(tempTask);
                     //Iterate to the next job to send
                     currentJobToSend++;
                     //Stop coming to the init state when all jobs are sent out
-                    if(currentJobToSend == WINHEIGHT)init = false;
-                }
-
-                //Prepare colors to be drawn one pixel at a time
-                GraphicsContext gc = canvas.getGraphicsContext2D();
-                Color[] colors = new Color[MAXDEPTH];
-                for (int i = 0; i < MAXDEPTH; i++) {
-                    colors[i] = Color.hsb(i/256f, 1, i/(i+8f));
-                }
-
-                //get current number of running jobs
-                numberOfJobs = ids.keySet().size();
-                //get current job to process by accessing some key from the keySet.
-                Object[] keys = ids.keySet().toArray();
-                int jobid = (int)keys[currentJobToProcess];
-
-                //set result to null, assign value to it when result is received.
-                byte[] result = null;
-                try {
-                    System.out.println("job id: " + jobid); //TODO: remove debug print
-                    boolean done = sc.pollJob(jobid);
-                    if(done) {
-                        //get the job from SageClient sc with the current jobid.
-                        Job job = sc.getJob(jobid);
-                        //Jobs are sometimes coming back null with a done status.
-                        //Extra check to ensure this doesn't happen.
-                        if(job != null)result = job.getResult();
-
-                        //If result is till null, then we didn't get a valid job back.
-                        //If a job did come back, use its result to draw a fractal row to the screen.
-                        if (result != null) {
-                            int[] iterationNums = byte2int(result);
-                            for (int col = 0; col < WINWIDTH; col++) {
-                                int iteration = iterationNums[col];
-                                PixelWriter pw = gc.getPixelWriter();
-                                if (iteration < MAXDEPTH) pw.setColor(col, ids.get(jobid), colors[iteration]);
-                                else pw.setColor(col, ids.get(jobid), Color.BLACK);
-                            }
-                        }
-                        //Remove this ID because it is no longer needed.
-                        ids.remove(jobid);
-                        //Keep track of how many jobs have been finished so we know when to end.
-                        totalJobsCompleted++;
+                    if (currentJobToSend == WINHEIGHT){
+                        System.out.println("All jobs sent");
+                        init = false;
                     }
-                    //Use this else to use a different method of job selection.
-                    //This will cycle through all the available jobs each frame.
-                    //Without it, we just look for the first available one.
-                    else currentJobToProcess++;
-                } catch (Exception e) {
-                    e.printStackTrace();
                 }
-                //Cycle back to first job if we make it to the end.
-                if(currentJobToProcess >= numberOfJobs-1) currentJobToProcess = 0;
-                //If all jobs are finished, stop the timer. It is no longer needed.
-                if(totalJobsCompleted == WINHEIGHT) this.stop();
+                //if(!init) {
+                int numberOfJobs = ids.keySet().size();
+                for(int iJob = 0; iJob < numberOfJobs; iJob++) {
+                    //System.out.println("entered loop");
+                    //ConcurrentDraw tempDraw = new ConcurrentDraw(currentJobToProcess, ids, canvas, sc);
+                    ConcurrentDraw tempDraw = new ConcurrentDraw(iJob, ids, canvas, sc);
+                    FutureTask<Integer> tempTask = new FutureTask<Integer>(tempDraw);
+                    pool.submit(tempTask);
+                    //Cycle back to first job if we make it to the end.
+                    //if (currentJobToProcess >= numberOfJobs - 1) currentJobToProcess = 0;
+                    //If all jobs are finished, stop the timer. It is no longer needed.
+                    if (totalJobsCompleted == WINHEIGHT) {
+                        System.out.println("Finished drawing to screen!");
+                        pool.shutdown();
+                        this.stop();
+                    }
+                }
+                //}
+
             }
         };
 

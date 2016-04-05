@@ -1,5 +1,3 @@
-package sample;
-
 import com.sage.task.SageTask;
 
 /**
