@@ -47,12 +47,14 @@ public class ConcurrentDraw implements Callable<Integer> {
         //get current job to process by accessing some key from the keySet.
         Object[] keys = ids.keySet().toArray();
         if (currentJobToProcess < keys.length) {
-            int jobid = (int) keys[currentJobToProcess];
+            int jobnum =(int) keys[currentJobToProcess];
+            int jobid = (int) ids.get(keys[currentJobToProcess]);
             //set result to null, assign value to it when result is received.
             byte[] result = null;
             try {
+                //System.out.println("jobid is: "+jobid); //TODO: debug
                 boolean done = sc.pollJob(jobid);
-                System.out.println("Status for job " + jobid + ": " + sc.getJob(jobid).getStatus()); //TODO: debug
+                //System.out.println("Status for job " + jobid + ": " + sc.getJob(jobid).getStatus()); //TODO: debug
                 if (done) {
                     //get the job from SageClient sc with the current jobid.
                     Job job = sc.getJob(jobid);
@@ -64,20 +66,24 @@ public class ConcurrentDraw implements Callable<Integer> {
                     //If a job did come back, use its result to draw a fractal row to the screen.
                     if (result != null) {
                         //System.out.println(", and job is non-null"); //TODO: debug
+                        sema.acquire();
                         int[] iterationNums = Main.byte2int(result);
-                        for (int col = 0; col < Main.WINWIDTH; col++) {
+                        sema.release();
+                        for (int col = 0; col < iterationNums.length; col++) {
                             int iteration = iterationNums[col];
                             sema.acquire();
                             PixelWriter pw = gc.getPixelWriter();
                             //System.out.println("null?: " + jobid);//TODO: debug
-                            if(ids.get(jobid)!=null) {
-                                if (iteration < Main.MAXDEPTH) pw.setColor(col, ids.get(jobid), colors[iteration]);
-                                else pw.setColor(col, ids.get(jobid), Color.BLACK);
+                            if(ids.get(jobnum)!=null) {
+                                if (iteration < Main.MAXDEPTH){
+                                    pw.setColor(col, jobnum, colors[iteration]);
+                                }
+                                else pw.setColor(col, jobnum, Color.BLACK);
                             }
                             sema.release();
                         }
                         //Remove this ID because it is no longer needed.
-                        ids.remove(jobid);
+                        ids.remove(jobnum);
                         //Keep track of how many jobs have been finished so we know when to end.
                         Main.totalJobsCompleted++;
                     }

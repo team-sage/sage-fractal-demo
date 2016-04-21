@@ -1,11 +1,18 @@
 package sample;
 
+import com.sun.corba.se.impl.orbutil.graph.Graph;
 import javafx.animation.AnimationTimer;
 import javafx.application.Application;
 import javafx.scene.Group;
 import javafx.scene.Scene;
 import javafx.scene.canvas.Canvas;
+import javafx.scene.canvas.GraphicsContext;
+import javafx.scene.image.PixelWriter;
+import javafx.scene.paint.Color;
 import javafx.stage.Stage;
+
+import java.io.File;
+import java.math.BigDecimal;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.FutureTask;
@@ -14,8 +21,9 @@ import java.util.concurrent.ScheduledThreadPoolExecutor;
 import com.sage.api.client.SageClient;
 
 public class Main extends Application {
-    public static final int WINWIDTH  =   1920/3;    //Window width
-    public static final int WINHEIGHT =   1080/3;    //Window height
+    public static final int DIVIDESIZE = 1;
+    public static final int WINWIDTH  =   1920/DIVIDESIZE;    //Window width
+    public static final int WINHEIGHT =   1080/DIVIDESIZE;    //Window height
     public static final int MAXDEPTH  =   1000;   //Maximum recursive depth of fractal
     public static final int BOUNTY    =   8;      //Bounty per job
     public static final int TIMEOUT   =   100;    //Job timeout
@@ -25,6 +33,9 @@ public class Main extends Application {
     //public static final Semaphore sema = new Semaphore(1); //Semaphore for adding to the ids map
     protected final ExecutorService pool =
             new ScheduledThreadPoolExecutor(Runtime.getRuntime().availableProcessors());
+
+    //HashMap of kv-pairs consisting of (Job ID, Fractal Row Number)
+    protected static Map<Integer, Integer> ids = new HashMap<Integer, Integer>();
 
     @Override public void start(Stage stage) {
         fadeTest(stage);
@@ -41,11 +52,11 @@ public class Main extends Application {
             int currentJobToProcess =   0;  //Keep track of which job is currently being processed
 
 
-            //HashMap of kv-pairs consisting of (Job ID, Fractal Row Number)
-            Map<Integer, Integer> ids = new HashMap<Integer, Integer>();
+
 
             //Start a Sage API client
             SageClient sc = new SageClient();
+            List<byte[]> batch = new ArrayList<byte[]>();
 
             //Flag to check if all the jobs are still being sent out. Set to false when done.
             boolean init = true;
@@ -54,20 +65,37 @@ public class Main extends Application {
             public void handle(long now) {
 
                 //Send out all the jobs
+
                 while (init) {
-                    ConcurrentJob tempJob = new ConcurrentJob(currentJobToSend, sc, ids);
-                    FutureTask<Integer> tempTask = new FutureTask<Integer>(tempJob);
-                    pool.submit(tempTask);
+                    //ConcurrentJob tempJob = new ConcurrentJob(currentJobToSend, sc, ids);
+                    //FutureTask<Integer> tempTask = new FutureTask<Integer>(tempJob);
+                    //pool.submit(tempTask);
+
+
+                    //Int array of all necessary data.
+                    //Width, height, depth, and current job (row number) are used by the java file
+                    int[] data = {Main.WINWIDTH, Main.WINHEIGHT, Main.MAXDEPTH, currentJobToSend};
+                    //Convert to byte array
+                    byte[] dataToSend = Main.int2byte(data);
+                    batch.add(dataToSend);
+
                     //Iterate to the next job to send
                     currentJobToSend++;
                     //Stop coming to the init state when all jobs are sent out
                     if (currentJobToSend == WINHEIGHT){
-                        System.out.println("All jobs sent");
                         init = false;
+                        try {
+                            File javaFile = new File("/home/wert/Documents/Test/FracTask.java");
+                            ids = sc.placeBatchOrder(javaFile, new BigDecimal(2.0), 60000, batch);
+                            System.out.println("Jobs sent, getting job ids");
+                        } catch(Exception e){
+                            e.printStackTrace();
+                        }
                     }
                 }
-                //if(!init) {
+
                 int numberOfJobs = ids.keySet().size();
+                //System.out.println("number of jobs: " + numberOfJobs); //TODO: debug
                 for(int iJob = 0; iJob < numberOfJobs; iJob++) {
                     //System.out.println("entered loop");
                     //ConcurrentDraw tempDraw = new ConcurrentDraw(currentJobToProcess, ids, canvas, sc);
@@ -83,8 +111,13 @@ public class Main extends Application {
                         this.stop();
                     }
                 }
-                //}
-
+                if(!init) {
+                    try{
+                        Thread.sleep(WINHEIGHT);
+                    } catch (Exception e){
+                        e.printStackTrace();
+                    }
+                }
             }
         };
 
