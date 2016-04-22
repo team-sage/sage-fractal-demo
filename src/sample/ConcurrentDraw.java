@@ -54,7 +54,7 @@ public class ConcurrentDraw implements Callable<Integer> {
             try {
                 //System.out.println("jobid is: "+jobid); //TODO: debug
                 boolean done = sc.pollJob(jobid);
-                //System.out.println("Status for job " + jobid + ": " + sc.getJob(jobid).getStatus()); //TODO: debug
+                System.out.println("Status for job " + jobid + ": " + sc.getJob(jobid).getStatus()); //TODO: debug
                 if (done) {
                     //get the job from SageClient sc with the current jobid.
                     Job job = sc.getJob(jobid);
